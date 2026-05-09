@@ -1,18 +1,28 @@
 import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, YAxis, CartesianGrid } from 'recharts';
-import { Achievement, DailyStats } from '../types';
+import { Achievement, DailyStats, CoachingPlan, ChallengeMission, LeaderboardEntry, HealthPatternInsight, HealthRiskAlert } from '../types';
 import { generateWeeklyReport } from '../services/geminiService';
-import { Sparkles, Flame, Trophy } from 'lucide-react';
+import { Sparkles, Flame, Trophy, Users, Star } from 'lucide-react';
 
 interface StatisticsProps {
   history: DailyStats[]; 
   achievements: Achievement[];
   currentStreak: number;
   isDarkMode: boolean;
+  coachingPlan?: CoachingPlan | null;
+  missions: ChallengeMission[];
+  xp: number;
+  level: number;
+  leaderboard: LeaderboardEntry[];
+  socialModeEnabled: boolean;
+  drinkQualityScore: number;
+  riskAlert: HealthRiskAlert;
+  healthPatterns: HealthPatternInsight[];
+  personalizedTips: string[];
   onViewAchievements?: () => void;
 }
 
-const Statistics: React.FC<StatisticsProps> = ({ history, achievements, currentStreak, isDarkMode, onViewAchievements }) => {
+const Statistics: React.FC<StatisticsProps> = ({ history, achievements, currentStreak, isDarkMode, coachingPlan, missions, xp, level, leaderboard, socialModeEnabled, drinkQualityScore, riskAlert, healthPatterns, personalizedTips, onViewAchievements }) => {
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
 
@@ -101,6 +111,24 @@ const Statistics: React.FC<StatisticsProps> = ({ history, achievements, currentS
                     <p className="text-[10px] text-gray-400 font-medium italic">Get personalized insights on your hydration habits.</p>
                 )}
              </div>
+
+             <div className={`p-6 rounded-[2rem] shadow-sm border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-50'}`}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-black text-xs uppercase tracking-widest ${isDarkMode ? 'text-gray-200' : 'text-purple-900'}`}>XP Progress</h3>
+                  <span className="text-[10px] font-black text-purple-500">Level {level}</span>
+                </div>
+                <p className={`text-xl font-black mb-3 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{xp} XP</p>
+                <div className={`h-3 rounded-full overflow-hidden ${isDarkMode ? 'bg-white/10' : 'bg-purple-100'}`}>
+                  <div className="h-full bg-purple-600 transition-all" style={{ width: `${Math.min(100, Math.round((xp / Math.max(250, level * 250)) * 100))}%` }} />
+                </div>
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mt-2">Complete challenges to level up</p>
+             </div>
+
+             <div className={`p-6 rounded-[2rem] shadow-sm border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-50'}`}>
+                <h3 className={`font-black text-xs uppercase tracking-widest mb-2 ${isDarkMode ? 'text-gray-200' : 'text-purple-900'}`}>Health Intelligence</h3>
+                <p className={`text-xl font-black ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Quality {drinkQualityScore}%</p>
+                <p className={`text-[11px] mt-2 ${riskAlert.level === 'high' ? 'text-red-500' : 'text-gray-400'}`}>{riskAlert.title}: {riskAlert.message}</p>
+             </div>
           </div>
 
           <div className="flex flex-col gap-4 md:gap-6">
@@ -183,6 +211,77 @@ const Statistics: React.FC<StatisticsProps> = ({ history, achievements, currentS
                       ))}
                   </div>
                 </div>
+             </div>
+
+             {coachingPlan && (
+              <div className={`p-6 rounded-[2.5rem] shadow-sm border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-50'}`}>
+                  <h3 className={`font-black text-xs uppercase tracking-widest mb-2 ${isDarkMode ? 'text-gray-200' : 'text-purple-900'}`}>{coachingPlan.title}</h3>
+                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-wider mb-4">{coachingPlan.focus}</p>
+                  <div className="space-y-2">
+                    {coachingPlan.goals.map((goal) => (
+                      <p key={goal} className={`text-[11px] font-medium leading-relaxed ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>- {goal}</p>
+                    ))}
+                  </div>
+              </div>
+             )}
+
+             <div className={`p-6 rounded-[2.5rem] shadow-sm border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-50'}`}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-black text-xs uppercase tracking-widest ${isDarkMode ? 'text-gray-200' : 'text-purple-900'}`}>Challenges</h3>
+                  <Star size={14} className="text-yellow-500" />
+                </div>
+                <div className="space-y-3">
+                  {missions.map((mission) => {
+                    const progressPct = Math.min(100, Math.round((mission.progress / mission.target) * 100));
+                    return (
+                      <div key={mission.id} className={`p-3 rounded-2xl border ${isDarkMode ? 'border-white/10 bg-white/5' : 'border-purple-100 bg-purple-50/40'}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className={`text-[11px] font-black ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>{mission.title}</p>
+                            <p className="text-[10px] text-gray-400 font-medium">{mission.description}</p>
+                          </div>
+                          <p className="text-[10px] font-black text-purple-500">{mission.progress}/{mission.target}</p>
+                        </div>
+                        <div className={`mt-2 h-2 rounded-full overflow-hidden ${isDarkMode ? 'bg-white/10' : 'bg-purple-100'}`}>
+                          <div className={`h-full transition-all ${mission.completed ? 'bg-green-500' : 'bg-purple-600'}`} style={{ width: `${progressPct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+             </div>
+
+             {socialModeEnabled && (
+              <div className={`p-6 rounded-[2.5rem] shadow-sm border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-50'}`}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-black text-xs uppercase tracking-widest ${isDarkMode ? 'text-gray-200' : 'text-purple-900'}`}>Social Accountability</h3>
+                  <Users size={14} className="text-purple-500" />
+                </div>
+                <div className="space-y-2">
+                  {leaderboard.map((entry, index) => (
+                    <div key={entry.id} className={`flex items-center justify-between p-3 rounded-2xl ${entry.isYou ? (isDarkMode ? 'bg-purple-900/30' : 'bg-purple-50') : (isDarkMode ? 'bg-white/5' : 'bg-gray-50/70')}`}>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-black text-gray-400">#{index + 1}</span>
+                        <span className={`text-[11px] font-black ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>{entry.name}{entry.isYou ? ' (You)' : ''}</span>
+                      </div>
+                      <span className="text-[10px] font-black text-purple-500">{entry.points} XP</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+             )}
+
+             <div className={`p-6 rounded-[2.5rem] shadow-sm border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-50'}`}>
+               <h3 className={`font-black text-xs uppercase tracking-widest mb-3 ${isDarkMode ? 'text-gray-200' : 'text-purple-900'}`}>Pattern Detection</h3>
+               <div className="space-y-2">
+                {healthPatterns.length > 0 ? healthPatterns.map((pattern) => (
+                  <p key={pattern.id} className={`text-[11px] ${pattern.severity === 'warning' ? 'text-orange-500' : (isDarkMode ? 'text-gray-300' : 'text-gray-600')}`}>- {pattern.detail}</p>
+                )) : <p className="text-[11px] text-gray-400">Not enough behavior data yet.</p>}
+               </div>
+               <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400 mt-4 mb-2">Tips Feed</h4>
+               <div className="space-y-2">
+                {personalizedTips.map((tip) => <p key={tip} className={`text-[11px] ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>- {tip}</p>)}
+               </div>
              </div>
           </div>
       </div>

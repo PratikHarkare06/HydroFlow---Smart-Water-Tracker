@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Droplet, Coffee, Bean, Cookie, Milk, Flame, Trash2, Plus, Timer, Zap, Target, GlassWater, Utensils } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { Search, Droplet, Coffee, Bean, Cookie, Milk, Flame, Trash2, Plus, Timer, Zap, Target, GlassWater, Mic, ScanLine } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import CalendarStrip from './CalendarStrip';
-import { DailyStats, User, DrinkType } from '../types';
+import { DailyStats, User, DrinkType, HealthPatternInsight, HealthRiskAlert } from '../types';
 import { getHydrationAdvice } from '../services/geminiService';
 import { playClickSound } from '../services/soundService';
+import { convertMlToDisplay, parseVoiceLogCommand } from '../services/utilityService';
 
 interface DashboardProps {
   stats: DailyStats;
@@ -17,13 +18,23 @@ interface DashboardProps {
   isDarkMode: boolean;
   streak: number;
   onDeleteRecord: (id: string) => void;
+  adaptiveGoal: number;
+  drinkQualityScore: number;
+  riskAlert: HealthRiskAlert;
+  personalizedTips: string[];
+  healthPatterns: HealthPatternInsight[];
+  guidanceContext: string;
+  unitSystem?: 'ml' | 'oz';
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ stats, user, onAddWaterClick, onQuickAdd, selectedDate, onSelectDate, weeklyStats, isDarkMode, streak, onDeleteRecord }) => {
+const Dashboard: React.FC<DashboardProps> = ({ stats, user, onAddWaterClick, onQuickAdd, selectedDate, onSelectDate, weeklyStats, isDarkMode, streak, onDeleteRecord, adaptiveGoal, drinkQualityScore, riskAlert, personalizedTips, healthPatterns, guidanceContext, unitSystem = 'ml' }) => {
   const [advice, setAdvice] = useState<string | null>(null);
   const [loadingAdvice, setLoadingAdvice] = useState(false);
   const [greeting, setGreeting] = useState('Good Morning');
   const [searchQuery, setSearchQuery] = useState('');
+  const [voiceSupported] = useState<boolean>(() => typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition));
+  const [isListening, setIsListening] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const totalIntake = useMemo(() => {
     return stats.records.reduce((sum, record) => sum + record.amount, 0);
@@ -69,7 +80,7 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, user, onAddWaterClick, onQ
   const handleGetAdvice = async () => {
     playClickSound();
     setLoadingAdvice(true);
-    const tip = await getHydrationAdvice(totalIntake, stats.target);
+    const tip = await getHydrationAdvice(totalIntake, stats.target, "Sunny, 25°C", guidanceContext);
     setAdvice(tip);
     setLoadingAdvice(false);
   };
@@ -137,10 +148,31 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, user, onAddWaterClick, onQ
       <div className={`p-3 rounded-2xl mb-2 ${isDarkMode ? 'bg-white/5 text-purple-400' : 'bg-purple-50 text-purple-600'}`}>
         <Icon size={20} />
       </div>
-      <span className={`text-[11px] font-black uppercase tracking-widest ${isDarkMode ? 'text-gray-200' : 'text-gray-900'}`}>{amount}ml</span>
+      <span className={`text-[11px] font-black uppercase tracking-widest ${isDarkMode ? 'text-gray-200' : 'text-gray-900'}`}>{convertMlToDisplay(amount, unitSystem)}{unitSystem}</span>
       <span className="text-[8px] text-gray-400 font-bold uppercase tracking-wider">{label}</span>
     </button>
   );
+
+  const handleVoiceLog = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    setIsListening(true);
+    recognition.onresult = (event: any) => {
+      const text = event.results?.[0]?.[0]?.transcript || '';
+      const parsed = parseVoiceLogCommand(text);
+      if (parsed) {
+        onQuickAdd(parsed.amountMl, parsed.type, `Voice log: ${text}`);
+      }
+      setIsListening(false);
+    };
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
+    recognition.start();
+  };
 
   return (
     <div className={`flex flex-col h-full px-4 sm:px-6 py-6 sm:py-8 transition-colors duration-300 overflow-x-hidden ${isDarkMode ? 'bg-black' : 'bg-[#FAF9FF]'}`}>
@@ -201,6 +233,10 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, user, onAddWaterClick, onQ
                    <Target size={14} />
                    <span>Goal: {stats.target}ml</span>
                 </div>
+            </div>
+            <div className={`text-[10px] font-bold uppercase tracking-widest px-4 py-2 rounded-2xl inline-flex items-center gap-2 ${isDarkMode ? 'bg-white/5 text-gray-300 border border-white/10' : 'bg-white text-gray-500 border border-purple-100'}`}>
+              <span>Adaptive goal</span>
+              <span className="text-purple-600">{adaptiveGoal} ml</span>
             </div>
             <CalendarStrip selectedDate={selectedDate} onSelectDate={onSelectDate} isDarkMode={isDarkMode} />
           </div>
@@ -297,6 +333,67 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, user, onAddWaterClick, onQ
               <QuickAddButton amount={250} icon={Droplet} label="Glass" />
               <QuickAddButton amount={500} icon={GlassWater} label="Bottle" />
               <QuickAddButton amount={750} icon={Flame} label="Sport" />
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={handleVoiceLog}
+                disabled={!voiceSupported || isListening}
+                className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl border text-xs font-black uppercase tracking-wider ${isDarkMode ? 'border-white/10 bg-white/5 text-gray-200' : 'border-purple-100 bg-white text-purple-700'} disabled:opacity-50`}
+              >
+                <Mic size={14} />
+                {isListening ? 'Listening...' : 'Voice Log'}
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl border text-xs font-black uppercase tracking-wider ${isDarkMode ? 'border-white/10 bg-white/5 text-gray-200' : 'border-purple-100 bg-white text-purple-700'}`}
+              >
+                <ScanLine size={14} />
+                Scan Drink
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const parsed = parseVoiceLogCommand(f.name) || { amountMl: 250, type: DrinkType.WATER };
+                  onQuickAdd(parsed.amountMl, parsed.type, `Scanned: ${f.name}`);
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className={`p-5 rounded-[2rem] border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-100'}`}>
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Drink Quality Score</p>
+              <p className={`text-3xl font-black ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{drinkQualityScore}%</p>
+              <p className="text-[11px] text-gray-400 mt-2">Higher score means better hydration quality balance.</p>
+            </div>
+            <div className={`p-5 rounded-[2rem] border ${riskAlert.level === 'high' ? 'border-red-400' : (isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-100')}`}>
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Risk Alert</p>
+              <p className={`text-sm font-black ${riskAlert.level === 'high' ? 'text-red-500' : (isDarkMode ? 'text-white' : 'text-gray-900')}`}>{riskAlert.title}</p>
+              <p className="text-[11px] text-gray-400 mt-2">{riskAlert.message}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className={`p-5 rounded-[2rem] border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-100'}`}>
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-3">Patterns</p>
+              <div className="space-y-2">
+                {healthPatterns.length > 0 ? healthPatterns.map((pattern) => (
+                  <p key={pattern.id} className={`text-[11px] font-medium ${pattern.severity === 'warning' ? 'text-orange-500' : (isDarkMode ? 'text-gray-300' : 'text-gray-600')}`}>- {pattern.label}: {pattern.detail}</p>
+                )) : <p className="text-[11px] text-gray-400">No significant pattern detected yet.</p>}
+              </div>
+            </div>
+            <div className={`p-5 rounded-[2rem] border ${isDarkMode ? 'bg-black border-white/10' : 'bg-white border-purple-100'}`}>
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-3">Personalized Tips</p>
+              <div className="space-y-2">
+                {personalizedTips.map((tip) => (
+                  <p key={tip} className={`text-[11px] ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>- {tip}</p>
+                ))}
+              </div>
             </div>
           </div>
         </div>

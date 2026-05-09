@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserSettings } from '../types';
-import { ChevronRight, Bell, Moon, LogOut, Sun, Clock, Calculator } from 'lucide-react';
+import { ChevronRight, Bell, Moon, LogOut, Sun, Clock, Calculator, Watch, Languages } from 'lucide-react';
 import { requestNotificationPermission } from '../services/notificationService';
 import { playClickSound } from '../services/soundService';
 import EditProfileModal from './EditProfileModal';
@@ -113,6 +113,8 @@ const Settings: React.FC<SettingsProps> = ({
       <div className="mb-8">
         <h3 className="text-[10px] font-black text-gray-400 uppercase mb-4 ml-4 tracking-[0.2em]">Goal & Health</h3>
         <SettingRow icon={Calculator} label="Smart Goal Calculator" onClick={onOpenCalculator} value={`${settings.dailyGoal}ml`} />
+        <SettingRow icon={Calculator} label="Adaptive Goal Engine" toggle={settings.adaptiveGoalEnabled !== false} onClick={() => onUpdateSettings({ adaptiveGoalEnabled: !(settings.adaptiveGoalEnabled !== false) })} />
+        <SettingRow icon={Clock} label="Smart Reminders" toggle={settings.smartRemindersEnabled !== false} onClick={() => onUpdateSettings({ smartRemindersEnabled: !(settings.smartRemindersEnabled !== false) })} />
       </div>
 
       <div className="mb-8">
@@ -188,7 +190,11 @@ const Settings: React.FC<SettingsProps> = ({
 
       <div className="mb-8">
         <h3 className="text-[10px] font-black text-gray-400 uppercase mb-4 ml-4 tracking-[0.2em]">General</h3>
+        <SettingRow icon={Watch} label="Wearable Sync" toggle={settings.wearableSyncEnabled !== false} onClick={() => onUpdateSettings({ wearableSyncEnabled: !(settings.wearableSyncEnabled !== false) })} />
+        <SettingRow icon={Languages} label="Language" value={(settings.language || 'en').toUpperCase()} onClick={() => onUpdateSettings({ language: (settings.language || 'en') === 'en' ? 'hi' : 'en' })} />
+        <SettingRow icon={Calculator} label="Units" value={(settings.unitSystem || 'ml').toUpperCase()} onClick={() => onUpdateSettings({ unitSystem: (settings.unitSystem || 'ml') === 'ml' ? 'oz' : 'ml' })} />
         <SettingRow icon={isDarkMode ? Sun : Moon} label={isDarkMode ? "Light Mode" : "Dark Mode"} toggle={isDarkMode} onClick={onToggleDarkMode} />
+        <SettingRow icon={Bell} label="Social Accountability" toggle={settings.socialModeEnabled !== false} onClick={() => onUpdateSettings({ socialModeEnabled: !(settings.socialModeEnabled !== false) })} />
         <SettingRow icon={LogOut} label="Log Out" onClick={() => { playClickSound(); onLogout(); }} danger />
       </div>
 

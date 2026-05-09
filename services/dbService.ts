@@ -20,6 +20,25 @@ export const saveWaterRecord = async (userId: string, record: WaterRecord) => {
   return data;
 };
 
+export const saveWaterRecordsBatch = async (userId: string, records: WaterRecord[]) => {
+  if (records.length === 0) return;
+  const payload = records.map((record) => ({
+    id: record.id,
+    user_id: userId,
+    amount: record.amount,
+    type: record.type,
+    timestamp: record.timestamp,
+    note: record.note,
+    date: record.timestamp.split('T')[0]
+  }));
+
+  const { error } = await supabase
+    .from('hydration_records')
+    .upsert(payload, { onConflict: 'id' });
+
+  if (error) throw error;
+};
+
 export const deleteWaterRecord = async (recordId: string) => {
   const { error } = await supabase
     .from('hydration_records')
@@ -81,6 +100,12 @@ export const fetchUserSettings = async (userId: string): Promise<UserSettings | 
     wakeUpTime: data.wake_up_time,
     bedTime: data.bed_time,
     reminderType: data.reminder_type,
-    specificTimes: data.specific_times
+    specificTimes: data.specific_times,
+    adaptiveGoalEnabled: data.adaptive_goal_enabled ?? true,
+    smartRemindersEnabled: data.smart_reminders_enabled ?? true,
+    weightKg: data.weight_kg ?? undefined,
+    activityLevel: data.activity_level ?? 'medium',
+    climate: data.climate ?? 'temperate',
+    goalFocus: data.goal_focus ?? 'wellness'
   };
 };

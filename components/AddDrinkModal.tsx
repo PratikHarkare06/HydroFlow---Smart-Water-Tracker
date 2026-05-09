@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
-import { X, Droplet, Coffee, Bean, Cookie, Milk } from 'lucide-react';
+import { X, Droplet, Coffee, Bean, Cookie, Milk, Camera } from 'lucide-react';
 import { DrinkType } from '../types';
+import { convertDisplayToMl, convertMlToDisplay, inferDrinkFromFileName } from '../services/utilityService';
 
 interface AddDrinkModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAdd: (amount: number, type: DrinkType, note: string) => void;
   isDarkMode?: boolean;
+  unitSystem?: 'ml' | 'oz';
 }
 
-const AddDrinkModal: React.FC<AddDrinkModalProps> = ({ isOpen, onClose, onAdd, isDarkMode }) => {
+const AddDrinkModal: React.FC<AddDrinkModalProps> = ({ isOpen, onClose, onAdd, isDarkMode, unitSystem = 'ml' }) => {
   const [selectedType, setSelectedType] = useState<DrinkType>(DrinkType.WATER);
-  const [amount, setAmount] = useState(200);
+  const [amount, setAmount] = useState(unitSystem === 'oz' ? 7 : 200);
   const [note, setNote] = useState('');
 
   if (!isOpen) return null;
@@ -27,9 +29,9 @@ const AddDrinkModal: React.FC<AddDrinkModalProps> = ({ isOpen, onClose, onAdd, i
   const presetAmounts = [100, 200, 300, 500];
 
   const handleSave = () => {
-    onAdd(amount, selectedType, note);
+    onAdd(convertDisplayToMl(amount, unitSystem), selectedType, note);
     onClose();
-    setAmount(200);
+    setAmount(unitSystem === 'oz' ? 7 : 200);
     setNote('');
     setSelectedType(DrinkType.WATER);
   };
@@ -65,14 +67,14 @@ const AddDrinkModal: React.FC<AddDrinkModalProps> = ({ isOpen, onClose, onAdd, i
           <div className="flex justify-between items-end mb-4">
             <span className="text-gray-500 font-medium">Amount</span>
             <div className="text-3xl font-bold text-purple-600 flex items-baseline">
-               {amount} <span className="text-sm text-gray-400 ml-1">ml</span>
+               {amount} <span className="text-sm text-gray-400 ml-1">{unitSystem}</span>
             </div>
           </div>
           <input
             type="range"
-            min="50"
-            max="1000"
-            step="50"
+            min={unitSystem === 'oz' ? 2 : 50}
+            max={unitSystem === 'oz' ? 34 : 1000}
+            step={unitSystem === 'oz' ? 0.5 : 50}
             value={amount}
             onChange={(e) => setAmount(Number(e.target.value))}
             className="w-full h-4 bg-gray-100 dark:bg-white/10 rounded-full appearance-none cursor-pointer accent-purple-500 mb-4"
@@ -81,16 +83,35 @@ const AddDrinkModal: React.FC<AddDrinkModalProps> = ({ isOpen, onClose, onAdd, i
             {presetAmounts.map((val) => (
               <button
                 key={val}
-                onClick={() => setAmount(val)}
+                onClick={() => setAmount(convertMlToDisplay(val, unitSystem))}
                 className={`flex-1 py-2 rounded-xl text-sm font-bold transition-colors ${
-                  amount === val ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-600 hover:bg-purple-100'
+                  amount === convertMlToDisplay(val, unitSystem) ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-600 hover:bg-purple-100'
                 }`}
               >
-                {val}ml
+                {Math.round(convertMlToDisplay(val, unitSystem) * 10) / 10}{unitSystem}
               </button>
             ))}
           </div>
         </div>
+
+        <label className={`mb-6 flex items-center justify-center gap-2 p-3 rounded-2xl border cursor-pointer ${isDarkMode ? 'border-white/10 text-gray-300 bg-white/5' : 'border-purple-100 text-purple-600 bg-purple-50'}`}>
+          <Camera size={16} />
+          <span className="text-xs font-black uppercase tracking-wider">Scan Label / Photo</span>
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            capture="environment"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              const inferred = inferDrinkFromFileName(f.name);
+              setSelectedType(inferred.type);
+              setAmount(convertMlToDisplay(inferred.amountMl, unitSystem));
+              setNote((prev) => prev || `Scanned: ${f.name}`);
+            }}
+          />
+        </label>
 
         <div className="mb-8">
             <label className="block text-gray-500 font-medium mb-2">Notes (Optional)</label>

@@ -37,6 +37,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin, onGuest }) => {
           }
           throw signInError;
         }
+        onLogin({ email });
       } else {
         const { error: signUpError } = await supabase.auth.signUp({
           email,

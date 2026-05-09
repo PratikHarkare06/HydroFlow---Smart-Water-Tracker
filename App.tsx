@@ -10,12 +10,14 @@ import AchievementsScreen from './components/AchievementsScreen';
 import Auth from './components/Auth';
 import NotificationToast from './components/NotificationToast';
 import GoalCalculatorModal from './components/GoalCalculatorModal';
-import { DailyStats, DrinkType, ScreenName, WaterRecord, UserSettings, User, Achievement } from './types';
+import Onboarding from './components/Onboarding';
+import { DailyStats, DrinkType, ScreenName, WaterRecord, UserSettings, User, Achievement, CoachingPlan, ChallengeMission, LeaderboardEntry, HealthPatternInsight, HealthRiskAlert } from './types';
 import { sendNotification, playNotificationSound } from './services/notificationService';
 import { playClickSound, playWaterSound, playSuccessSound } from './services/soundService';
-import { saveWaterRecord, deleteWaterRecord, fetchDailyRecords, upsertUserSettings, fetchUserSettings } from './services/dbService';
+import { saveWaterRecord, deleteWaterRecord, fetchDailyRecords, upsertUserSettings, fetchUserSettings, saveWaterRecordsBatch } from './services/dbService';
+import { buildWeeklyCoachingPlan, calculateAdaptiveGoal, recommendReminderInterval, calculateDrinkQualityScore, detectHydrationPatterns, assessHydrationRisk, buildPersonalizedTips } from './services/hydrationPlanner';
 
-type AppState = 'loading' | 'auth' | 'app';
+type AppState = 'loading' | 'auth' | 'onboarding' | 'app';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>('loading');
@@ -44,7 +46,16 @@ const App: React.FC = () => {
     wakeUpTime: "09:00",
     bedTime: "23:00",
     reminderType: 'interval',
-    specificTimes: ["09:00", "12:00", "15:00", "18:00", "21:00"]
+    specificTimes: ["09:00", "12:00", "15:00", "18:00", "21:00"],
+    adaptiveGoalEnabled: true,
+    smartRemindersEnabled: true,
+    activityLevel: 'medium',
+    climate: 'temperate',
+    goalFocus: 'wellness',
+    socialModeEnabled: true,
+    unitSystem: 'ml',
+    language: 'en',
+    wearableSyncEnabled: false
   });
 
   const [stats, setStats] = useState<DailyStats>({
@@ -57,10 +68,27 @@ const App: React.FC = () => {
   });
 
   const [allHistory, setAllHistory] = useState<DailyStats[]>([]);
+  const [effectiveGoal, setEffectiveGoal] = useState<number>(2200);
+  const [coachingPlan, setCoachingPlan] = useState<CoachingPlan | null>(null);
+  const [xp, setXp] = useState<number>(0);
+  const [level, setLevel] = useState<number>(1);
+  const [missions, setMissions] = useState<ChallengeMission[]>([
+    { id: 'm_daily_goal', title: 'Goal Hunter', description: 'Reach your daily goal 3 times this week', target: 3, progress: 0, completed: false, rewardXp: 120 },
+    { id: 'm_morning', title: 'Morning Sprint', description: 'Log water before 9:00 AM for 5 days', target: 5, progress: 0, completed: false, rewardXp: 150 },
+    { id: 'm_consistent', title: 'Hydration Cadence', description: 'Log at least 4 drinks in a day for 4 days', target: 4, progress: 0, completed: false, rewardXp: 130 }
+  ]);
+  const [milestonesCelebrated, setMilestonesCelebrated] = useState<string[]>([]);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [healthPatterns, setHealthPatterns] = useState<HealthPatternInsight[]>([]);
+  const [riskAlert, setRiskAlert] = useState<HealthRiskAlert>({ level: 'none', title: 'On track', message: 'Your hydration pace looks balanced.' });
+  const [personalizedTips, setPersonalizedTips] = useState<string[]>([]);
+  const [drinkQualityScore, setDrinkQualityScore] = useState<number>(0);
 
   const statsRef = useRef(stats);
   const settingsRef = useRef(settings);
   const lastProcessedMinute = useRef<string>("");
+  const xpRef = useRef(xp);
+  const levelRef = useRef(level);
 
   const loadHistory = async () => {
     const history: DailyStats[] = [];
@@ -95,6 +123,50 @@ const App: React.FC = () => {
       }
     }
     setAllHistory(history);
+    const adaptiveGoal = calculateAdaptiveGoal(settingsRef.current, history);
+    setEffectiveGoal(adaptiveGoal);
+    setCoachingPlan(buildWeeklyCoachingPlan(history, settingsRef.current));
+    updateMissionsFromHistory(history);
+    setHealthPatterns(detectHydrationPatterns(history));
+  };
+
+  const migrateGuestDataToCloud = async (cloudUserId: string) => {
+    const migratedFlag = localStorage.getItem(`hydroflow_guest_migrated_${cloudUserId}`);
+    if (migratedFlag === 'true') return;
+
+    const statKeys = Object.keys(localStorage).filter((key) => key.startsWith('hydroflow_stats_'));
+    const recordsToMigrate: WaterRecord[] = [];
+
+    for (const key of statKeys) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const parsed: DailyStats = JSON.parse(raw);
+        if (!Array.isArray(parsed.records)) continue;
+        recordsToMigrate.push(...parsed.records);
+      } catch (e) {
+        console.error('Failed parsing local stat key during migration', key, e);
+      }
+    }
+
+    try {
+      if (recordsToMigrate.length > 0) {
+        await saveWaterRecordsBatch(cloudUserId, recordsToMigrate);
+      }
+      await upsertUserSettings(cloudUserId, settingsRef.current);
+      localStorage.setItem(`hydroflow_guest_migrated_${cloudUserId}`, 'true');
+      localStorage.removeItem('hydroflow_guest_mode');
+      setToast({
+        title: 'Cloud Sync Complete',
+        message: recordsToMigrate.length > 0 ? `Migrated ${recordsToMigrate.length} local records to your account.` : 'Your local settings are now linked to your account.'
+      });
+    } catch (e) {
+      console.error('Guest migration failed', e);
+      setToast({
+        title: 'Sync Pending',
+        message: 'Your guest history could not be migrated right now. We kept local data safe.'
+      });
+    }
   };
 
   useEffect(() => {
@@ -122,6 +194,30 @@ const App: React.FC = () => {
     if (savedUser) {
         setUser(JSON.parse(savedUser));
     }
+
+    const savedXp = localStorage.getItem('hydroflow_xp');
+    if (savedXp) setXp(Number(savedXp) || 0);
+
+    const savedLevel = localStorage.getItem('hydroflow_level');
+    if (savedLevel) setLevel(Math.max(1, Number(savedLevel) || 1));
+
+    const savedMissions = localStorage.getItem('hydroflow_missions');
+    if (savedMissions) {
+      try {
+        setMissions(JSON.parse(savedMissions));
+      } catch (e) {
+        console.error('Failed to parse missions', e);
+      }
+    }
+
+    const savedMilestones = localStorage.getItem('hydroflow_milestones');
+    if (savedMilestones) {
+      try {
+        setMilestonesCelebrated(JSON.parse(savedMilestones));
+      } catch (e) {
+        console.error('Failed to parse milestones', e);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -148,10 +244,37 @@ const App: React.FC = () => {
   }, [user]);
 
   useEffect(() => {
+    localStorage.setItem('hydroflow_xp', String(xp));
+    localStorage.setItem('hydroflow_level', String(level));
+    xpRef.current = xp;
+    levelRef.current = level;
+  }, [xp, level]);
+
+  useEffect(() => {
+    localStorage.setItem('hydroflow_missions', JSON.stringify(missions));
+  }, [missions]);
+
+  useEffect(() => {
+    localStorage.setItem('hydroflow_milestones', JSON.stringify(milestonesCelebrated));
+  }, [milestonesCelebrated]);
+
+  useEffect(() => {
+    const meName = user?.name || 'You';
+    const others: LeaderboardEntry[] = [
+      { id: 'lb_1', name: 'Aarav', points: Math.max(200, xp + 120) },
+      { id: 'lb_2', name: 'Mira', points: Math.max(180, xp + 60) },
+      { id: 'lb_3', name: meName, points: xp, isYou: true },
+      { id: 'lb_4', name: 'Riya', points: Math.max(120, xp - 40) }
+    ];
+    setLeaderboard(others.sort((a, b) => b.points - a.points));
+  }, [xp, user]);
+
+  useEffect(() => {
     const initApp = async () => {
       const isGuest = localStorage.getItem('hydroflow_guest_mode') === 'true';
+      const completedOnboarding = localStorage.getItem('hydroflow_onboarding_completed') === 'true';
       if (isGuest) {
-        setAppState('app');
+        setAppState(completedOnboarding ? 'app' : 'onboarding');
         setIsSupabaseConnected(false);
         if (!user) {
           setUser({
@@ -179,8 +302,9 @@ const App: React.FC = () => {
           
           const cloudSettings = await fetchUserSettings(session.user.id);
           if (cloudSettings) setSettings(cloudSettings);
-          
-          setAppState('app');
+          await migrateGuestDataToCloud(session.user.id);
+
+          setAppState(completedOnboarding ? 'app' : 'onboarding');
         } else {
           setAppState('auth');
         }
@@ -195,13 +319,33 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const { data: subscription } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!session?.user) return;
+      setUserId(session.user.id);
+      setIsSupabaseConnected(true);
+      setUser({
+        name: session.user.user_metadata.name || session.user.email?.split('@')[0] || 'User',
+        email: session.user.email || '',
+        avatar: session.user.user_metadata.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${session.user.email}`
+      });
+      await migrateGuestDataToCloud(session.user.id);
+      const completedOnboarding = localStorage.getItem('hydroflow_onboarding_completed') === 'true';
+      setAppState(completedOnboarding ? 'app' : 'onboarding');
+    });
+
+    return () => {
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     const loadDayData = async () => {
       if (userId) {
         try {
           const cloudRecords = await fetchDailyRecords(userId, selectedDate);
           setStats({
             date: selectedDate,
-            target: settings.dailyGoal,
+            target: effectiveGoal,
             caloriesBurned: 0,
             heartRate: 0,
             workoutTimeMinutes: 0,
@@ -218,7 +362,7 @@ const App: React.FC = () => {
         } else {
           setStats({
             date: selectedDate,
-            target: settings.dailyGoal,
+            target: effectiveGoal,
             caloriesBurned: 0,
             heartRate: 0,
             workoutTimeMinutes: 0,
@@ -228,7 +372,19 @@ const App: React.FC = () => {
       }
     };
     loadDayData();
-  }, [selectedDate, settings.dailyGoal, userId]);
+  }, [selectedDate, settings.dailyGoal, userId, effectiveGoal]);
+
+  useEffect(() => {
+    setStats((prev) => ({ ...prev, target: effectiveGoal }));
+  }, [effectiveGoal]);
+
+  useEffect(() => {
+    const currentIntake = stats.records.reduce((sum, r) => sum + r.amount, 0);
+    const qualityScore = calculateDrinkQualityScore(stats.records);
+    setDrinkQualityScore(qualityScore);
+    setRiskAlert(assessHydrationRisk(currentIntake, stats.target, stats.records));
+    setPersonalizedTips(buildPersonalizedTips(currentIntake, stats.target, qualityScore, healthPatterns));
+  }, [stats, healthPatterns]);
 
   const handleGuestMode = () => {
     playClickSound();
@@ -238,7 +394,22 @@ const App: React.FC = () => {
       email: 'Guest Mode',
       avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=guest`
     });
-    setAppState('app');
+    const completedOnboarding = localStorage.getItem('hydroflow_onboarding_completed') === 'true';
+    setAppState(completedOnboarding ? 'app' : 'onboarding');
+  };
+
+  const handleAuthSuccess = async () => {
+    const completedOnboarding = localStorage.getItem('hydroflow_onboarding_completed') === 'true';
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user) {
+        setUserId(data.session.user.id);
+        await migrateGuestDataToCloud(data.session.user.id);
+      }
+    } catch (e) {
+      console.error('Failed to refresh session after login', e);
+    }
+    setAppState(completedOnboarding ? 'app' : 'onboarding');
   };
 
   const handleToggleDarkMode = () => {
@@ -248,14 +419,70 @@ const App: React.FC = () => {
     localStorage.setItem('hydroflow_darkmode', String(newMode));
   };
 
+  const awardXp = (amount: number, reason: string) => {
+    if (amount <= 0) return;
+    let nextXp = xpRef.current + amount;
+    let nextLevel = levelRef.current;
+    let threshold = nextLevel * 250;
+    while (nextXp >= threshold) {
+      nextXp -= threshold;
+      nextLevel += 1;
+      threshold = nextLevel * 250;
+      setToast({ title: 'Level Up!', message: `You reached level ${nextLevel}. Keep the streak alive!` });
+      playSuccessSound();
+    }
+    setXp(nextXp);
+    setLevel(nextLevel);
+    xpRef.current = nextXp;
+    levelRef.current = nextLevel;
+    if (reason && amount >= 50) {
+      setToast({ title: 'XP Earned', message: `+${amount} XP for ${reason}` });
+    }
+  };
+
+  const updateMissionsFromHistory = (history: DailyStats[]) => {
+    const recent = history.slice(0, 7);
+    const goalDays = recent.filter((day) => day.records.reduce((sum, r) => sum + r.amount, 0) >= day.target).length;
+    const morningDays = recent.filter((day) =>
+      day.records.some((record) => new Date(record.timestamp).getHours() < 9)
+    ).length;
+    const consistentDays = recent.filter((day) => day.records.length >= 4).length;
+
+    setMissions((prev) =>
+      prev.map((mission) => {
+        let progress = mission.progress;
+        if (mission.id === 'm_daily_goal') progress = Math.min(mission.target, goalDays);
+        if (mission.id === 'm_morning') progress = Math.min(mission.target, morningDays);
+        if (mission.id === 'm_consistent') progress = Math.min(mission.target, consistentDays);
+
+        const completed = progress >= mission.target;
+        if (!mission.completed && completed) {
+          awardXp(mission.rewardXp, `${mission.title} completed`);
+          setToast({ title: 'Challenge Completed!', message: `${mission.title} finished. +${mission.rewardXp} XP` });
+        }
+        return { ...mission, progress, completed };
+      })
+    );
+  };
+
   const checkAchievementsAndStreak = () => {
     let currentStreakCount = 0;
+    const now = new Date();
+    const weekStamp = `${now.getFullYear()}-W${Math.ceil((now.getDate() + new Date(now.getFullYear(), 0, 1).getDay()) / 7)}`;
+    let recoveryUsed = localStorage.getItem('hydroflow_streak_recovery_week') === weekStamp;
     const d = new Date();
     for (let i = 0; i < 30; i++) {
         const dateStr = d.toISOString().split('T')[0];
         const saved = localStorage.getItem(`hydroflow_stats_${dateStr}`);
         if (!saved) { 
           if (i === 0) {
+            d.setDate(d.getDate() - 1);
+            continue;
+          }
+          if (!recoveryUsed && i < 10 && currentStreakCount >= 2) {
+            recoveryUsed = true;
+            localStorage.setItem('hydroflow_streak_recovery_week', weekStamp);
+            setToast({ title: 'Streak Saved', message: 'Grace save used for this week. Keep your streak going!' });
             d.setDate(d.getDate() - 1);
             continue;
           }
@@ -268,6 +495,14 @@ const App: React.FC = () => {
         d.setDate(d.getDate() - 1);
     }
     setStreak(currentStreakCount);
+    if ([7, 30, 90].includes(currentStreakCount)) {
+      const key = `streak_${currentStreakCount}`;
+      if (!milestonesCelebrated.includes(key)) {
+        setMilestonesCelebrated((prev) => [...prev, key]);
+        setToast({ title: 'Milestone Hit!', message: `${currentStreakCount}-day streak celebration unlocked!` });
+        awardXp(100 + currentStreakCount, `${currentStreakCount}-day milestone`);
+      }
+    }
 
     // Achievement Logic
     const currentStats = statsRef.current;
@@ -291,6 +526,7 @@ const App: React.FC = () => {
           updatedAchievements = true;
           setToast({ title: "Badge Unlocked!", message: `You earned the ${ach.title} achievement! ${ach.icon}` });
           playSuccessSound();
+          awardXp(70, `${ach.title} badge`);
         }
       }
       return { ...ach, unlocked: isUnlocked };
@@ -334,9 +570,13 @@ const App: React.FC = () => {
            const lastDrink = new Date(sorted[0].timestamp);
            const diffMinutes = (now.getTime() - lastDrink.getTime()) / (1000 * 60);
            
-           if (diffMinutes >= currentSettings.reminderIntervalMinutes) {
+           const intelligentInterval = recommendReminderInterval(currentSettings, allHistory);
+           if (diffMinutes >= intelligentInterval) {
                 lastProcessedMinute.current = currentHm;
-                triggerNotification("Time to hydrate!", "It's been a while since your last drink. 💧");
+                const reminderMsg = currentSettings.smartRemindersEnabled
+                  ? `Smart reminder: your recent pattern suggests a water break every ${intelligentInterval} minutes. 💧`
+                  : "It's been a while since your last drink. 💧";
+                triggerNotification("Time to hydrate!", reminderMsg);
            }
        } else {
            const [wakeH, wakeM] = currentSettings.wakeUpTime.split(':').map(Number);
@@ -379,6 +619,7 @@ const App: React.FC = () => {
     }));
     
     setIsAddModalOpen(false);
+    awardXp(Math.max(5, Math.round(amount / 100) * 2), 'hydration logging');
 
     if (userId) {
       try {
@@ -393,6 +634,7 @@ const App: React.FC = () => {
     if (total >= stats.target) {
         playSuccessSound();
         triggerNotification("Goal Reached!", "Congratulations! You've reached your hydration goal for today. 🥳");
+        awardXp(90, 'daily goal completion');
     }
   };
 
@@ -412,7 +654,12 @@ const App: React.FC = () => {
   };
 
   const handleUpdateSettings = (newSettings: Partial<UserSettings>) => {
-    setSettings(prev => ({ ...prev, ...newSettings }));
+    setSettings(prev => {
+      const updated = { ...prev, ...newSettings };
+      const adaptiveGoal = calculateAdaptiveGoal(updated, allHistory);
+      setEffectiveGoal(adaptiveGoal);
+      return updated;
+    });
   };
 
   const handleLogout = () => {
@@ -431,7 +678,25 @@ const App: React.FC = () => {
       case 'reminders':
         return <Reminders stats={stats} onBack={() => setCurrentScreen('home')} isDarkMode={isDarkMode} onDeleteRecord={handleDeleteRecord} settings={settings} />;
       case 'statistics':
-        return <Statistics history={allHistory} achievements={achievements} currentStreak={streak} isDarkMode={isDarkMode} onViewAchievements={() => setCurrentScreen('achievements')} />;
+        return (
+          <Statistics
+            history={allHistory}
+            achievements={achievements}
+            currentStreak={streak}
+            isDarkMode={isDarkMode}
+            coachingPlan={coachingPlan}
+            missions={missions}
+            xp={xp}
+            level={level}
+            leaderboard={leaderboard}
+            socialModeEnabled={settings.socialModeEnabled !== false}
+            drinkQualityScore={drinkQualityScore}
+            riskAlert={riskAlert}
+            healthPatterns={healthPatterns}
+            personalizedTips={personalizedTips}
+            onViewAchievements={() => setCurrentScreen('achievements')}
+          />
+        );
       case 'settings':
         return (
           <Settings 
@@ -462,13 +727,31 @@ const App: React.FC = () => {
             isDarkMode={isDarkMode} 
             streak={streak} 
             onDeleteRecord={handleDeleteRecord}
+            adaptiveGoal={effectiveGoal}
+            drinkQualityScore={drinkQualityScore}
+            riskAlert={riskAlert}
+            personalizedTips={personalizedTips}
+            healthPatterns={healthPatterns}
+            guidanceContext={`${settings.activityLevel || 'medium'} activity, ${settings.climate || 'temperate'} climate`}
+            unitSystem={settings.unitSystem || 'ml'}
           />
         );
     }
   };
 
   if (appState === 'loading') return <div className="h-full w-full bg-black flex flex-col items-center justify-center font-bold text-purple-600"><Plus size={48} className="animate-spin mb-4" /> Loading HydroFlow...</div>;
-  if (appState === 'auth') return <Auth onLogin={() => setAppState('app')} onGuest={handleGuestMode} />;
+  if (appState === 'auth') return <Auth onLogin={handleAuthSuccess} onGuest={handleGuestMode} />;
+  if (appState === 'onboarding') {
+    return (
+      <Onboarding
+        onComplete={(profile) => {
+          setSettings((prev) => ({ ...prev, ...profile }));
+          localStorage.setItem('hydroflow_onboarding_completed', 'true');
+          setAppState('app');
+        }}
+      />
+    );
+  }
 
   return (
     <div className={`h-[100dvh] w-full flex flex-col relative overflow-hidden ${isDarkMode ? 'bg-black text-white' : 'bg-purple-50 text-gray-900'}`}>
@@ -492,7 +775,7 @@ const App: React.FC = () => {
           </nav>
       </div>
 
-      {isAddModalOpen && <AddDrinkModal isOpen={isAddModalOpen} isDarkMode={isDarkMode} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWater} />}
+      {isAddModalOpen && <AddDrinkModal isOpen={isAddModalOpen} isDarkMode={isDarkMode} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWater} unitSystem={settings.unitSystem || 'ml'} />}
       {isCalculatorOpen && (
         <GoalCalculatorModal 
           isOpen={isCalculatorOpen} 

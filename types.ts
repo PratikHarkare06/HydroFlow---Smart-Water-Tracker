@@ -32,6 +32,16 @@ export interface UserSettings {
   bedTime: string;
   reminderType: 'interval' | 'specific';
   specificTimes: string[]; // Array of "HH:MM" strings
+  adaptiveGoalEnabled?: boolean;
+  smartRemindersEnabled?: boolean;
+  weightKg?: number;
+  activityLevel?: 'low' | 'medium' | 'high';
+  climate?: 'cool' | 'temperate' | 'hot';
+  goalFocus?: 'consistency' | 'performance' | 'wellness';
+  socialModeEnabled?: boolean;
+  unitSystem?: 'ml' | 'oz';
+  language?: 'en' | 'hi';
+  wearableSyncEnabled?: boolean;
 }
 
 export interface User {
@@ -50,3 +60,39 @@ export interface Achievement {
 }
 
 export type ScreenName = 'home' | 'reminders' | 'statistics' | 'settings' | 'achievements';
+
+export interface CoachingPlan {
+  title: string;
+  goals: string[];
+  focus: string;
+}
+
+export interface ChallengeMission {
+  id: string;
+  title: string;
+  description: string;
+  target: number;
+  progress: number;
+  completed: boolean;
+  rewardXp: number;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  name: string;
+  points: number;
+  isYou?: boolean;
+}
+
+export interface HealthPatternInsight {
+  id: string;
+  label: string;
+  severity: 'info' | 'warning';
+  detail: string;
+}
+
+export interface HealthRiskAlert {
+  level: 'none' | 'low' | 'medium' | 'high';
+  title: string;
+  message: string;
+}

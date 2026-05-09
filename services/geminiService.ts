@@ -7,13 +7,15 @@ const MODEL_NAME = 'gemini-3-flash-preview';
 export const getHydrationAdvice = async (
   currentIntake: number, 
   target: number, 
-  weather: string = "Sunny, 25°C"
+  weather: string = "Sunny, 25°C",
+  context: string = "general wellness"
 ): Promise<string> => {
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const prompt = `
       I am building a water tracking app. The user has consumed ${currentIntake}ml out of their ${target}ml goal today.
       The current weather is ${weather}.
+      Context: ${context}.
       
       Provide a short, encouraging, and scientifically accurate hydration tip or message (max 2 sentences).
       If they are low on water, encourage them nicely. If they are doing well, congratulate them.
